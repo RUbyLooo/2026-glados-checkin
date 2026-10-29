@@ -201,6 +201,15 @@ def is_non_retryable_checkin_result(result):
     )
 
 
+def is_device_mismatch_result(result):
+    """Return True when failure is caused by device/User-Agent mismatch checks."""
+    if not isinstance(result, dict):
+        return False
+    reason = str(result.get('reason', '')).strip().lower()
+    message = str(result.get('message', '')).strip().lower()
+    return reason == 'device-mismatch' or 'automated check-in detected' in message
+
+
 def is_normal_checkin_result(result):
     """Return True for a new check-in or a harmless already-checked-in response."""
     if not isinstance(result, dict):
@@ -490,8 +499,10 @@ def main():
         log("⏭️ 自动兑换未启用")
 
     results = []
+    checkin_results = []
     success_cnt = 0
     exchange_events = 0
+    has_user_agent = bool(os.environ.get('GLADOS_USER_AGENT', '').strip())
 
     for i, cookie in enumerate(cookies, 1):
         g = GLaDOS(cookie)
@@ -500,6 +511,7 @@ def main():
         attempts = int(os.environ.get("CHECKIN_MAX_ATTEMPTS", "3"))
         delay_seconds = int(os.environ.get("CHECKIN_RETRY_DELAY_SECONDS", "60"))
         res, is_success = checkin_with_retry(g, attempts, delay_seconds)
+        checkin_results.append(res)
         msg = res.get('message', 'Failure') if res else "Network Error"
 
         # 2. Get Info (Refresh data)
@@ -543,6 +555,15 @@ def main():
 
     # Push
     push_level = os.environ.get("PUSH_LEVEL", "fail_only").lower()
+
+    if (
+        not has_user_agent
+        and success_cnt == 0
+        and checkin_results
+        and all(is_device_mismatch_result(result) for result in checkin_results)
+    ):
+        log("⚠️ 未配置 GLADOS_USER_AGENT 且触发设备校验，回退到只读诊断确认 Cookie 是否仍可用")
+        return diagnose_accounts(cookies)
 
     # Exchange outcomes (success or failure) are worth notifying even when
     # PUSH_LEVEL=fail_only, otherwise an always-failing exchange stays silent.
