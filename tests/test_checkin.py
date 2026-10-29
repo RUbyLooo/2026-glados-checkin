@@ -344,5 +344,49 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(client_class.return_value.req.call_count, 2)
 
 
+class MainFallbackTests(unittest.TestCase):
+    @mock.patch('checkin.diagnose_accounts', return_value=0)
+    @mock.patch('checkin.get_exchange_plan', return_value=None)
+    @mock.patch('checkin.get_cookies', return_value=['synthetic-cookie'])
+    @mock.patch('checkin.checkin_with_retry')
+    @mock.patch('checkin.GLaDOS')
+    def test_missing_user_agent_device_mismatch_falls_back_to_diagnostic(
+        self, client_class, checkin_retry, _cookies, _exchange_plan, diagnose,
+    ):
+        client = client_class.return_value
+        client.points = '0'
+        client.left_days = '0'
+        client.email = 'hidden@example.test'
+        client.exchange_info = ''
+        checkin_retry.return_value = (
+            {'code': 4, 'reason': 'device-mismatch', 'message': 'Automated check-in detected.'},
+            False,
+        )
+        with mock.patch.dict(os.environ, {'GLADOS_USER_AGENT': ''}, clear=True):
+            self.assertEqual(checkin.main(), 0)
+        diagnose.assert_called_once_with(['synthetic-cookie'])
+
+    @mock.patch('checkin.diagnose_accounts')
+    @mock.patch('checkin.get_exchange_plan', return_value=None)
+    @mock.patch('checkin.get_cookies', return_value=['synthetic-cookie'])
+    @mock.patch('checkin.checkin_with_retry')
+    @mock.patch('checkin.GLaDOS')
+    def test_configured_user_agent_keeps_device_mismatch_failure(
+        self, client_class, checkin_retry, _cookies, _exchange_plan, diagnose,
+    ):
+        client = client_class.return_value
+        client.points = '0'
+        client.left_days = '0'
+        client.email = 'hidden@example.test'
+        client.exchange_info = ''
+        checkin_retry.return_value = (
+            {'code': 4, 'reason': 'device-mismatch', 'message': 'Automated check-in detected.'},
+            False,
+        )
+        with mock.patch.dict(os.environ, {'GLADOS_USER_AGENT': 'custom-agent/1.0'}, clear=True):
+            self.assertEqual(checkin.main(), 1)
+        diagnose.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
